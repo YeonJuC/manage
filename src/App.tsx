@@ -1,3 +1,7 @@
+export default function App() {
+  return <h1 style={{ color: "red" }}>HELLO</h1>;
+}
+
 import { useEffect, useMemo, useState } from "react";
 import "./styles.css";
 import type { Assignee, Cohort, Task } from "./types";
