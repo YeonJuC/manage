@@ -6,7 +6,7 @@
   "homepage": "https://yeonjuc.github.io/manage",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc -b && vite build",
     "deploy": "gh-pages -d dist"
   },
   "dependencies": {
