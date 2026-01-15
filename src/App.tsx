@@ -16,19 +16,16 @@ function buildMonthGrid(monthISO: string) {
   const firstWeekday = weekday(start);
   const days: string[] = [];
 
-  // 앞쪽 빈칸 채우기(이전달)
   for (let i = 0; i < firstWeekday; i++) {
     days.push(addDays(start, -(firstWeekday - i)));
   }
 
-  // 이번달 날짜
   let cur = start;
   while (cur <= end) {
     days.push(cur);
     cur = addDays(cur, 1);
   }
 
-  // 6주(42칸) 맞추기
   while (days.length < 42) {
     days.push(addDays(days[days.length - 1], 1));
   }
@@ -37,6 +34,7 @@ function buildMonthGrid(monthISO: string) {
 }
 
 export default function App() {
+  // ✅ 1) states
   const [seed, setSeed] = useState<Seed | null>(null);
   const [seedLoading, setSeedLoading] = useState(true);
   const [seedError, setSeedError] = useState<string | null>(null);
@@ -45,54 +43,55 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(todayISO);
   const [taskMap, setTaskMap] = useState<Record<string, Task>>({});
 
+  // ✅ 2) effects
   useEffect(() => {
+    let alive = true;
+
     (async () => {
       try {
         const url = import.meta.env.BASE_URL + "tasks.seed.json";
-        console.log("seed fetch url:", url);
 
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`seed fetch failed: ${res.status} ${res.statusText}`);
 
         const data = (await res.json()) as Seed;
+        if (!alive) return;
+
         setSeed(data);
 
-        const stored = loadTasks();
+        // localStorage 로드/저장도 안전하게
+        let stored: Record<string, Task> = {};
+        try {
+          stored = loadTasks();
+        } catch (e) {
+          throw new Error(`loadTasks(localStorage) failed: ${(e as Error).message}`);
+        }
+
         const withBaseline = generateBaselineTasks(data.cohorts, data.assignees, stored);
         const normalized = updateAssigneeNames(withBaseline, data.assignees);
 
         setTaskMap(normalized);
-        saveTasks(normalized);
+
+        try {
+          saveTasks(normalized);
+        } catch (e) {
+          throw new Error(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+        }
       } catch (e) {
-        console.error(e);
+        if (!alive) return;
         setSeedError((e as Error).message);
       } finally {
+        if (!alive) return;
         setSeedLoading(false);
       }
     })();
+
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // ✅ 로딩/에러 UI (원인 확인용)
-  if (seedLoading) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>로딩 중…</h2>
-        <div>seedLoading = true</div>
-        <div>BASE_URL: {import.meta.env.BASE_URL}</div>
-      </div>
-    );
-  }
-
-  if (seedError) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>에러 발생</h2>
-        <pre style={{ whiteSpace: "pre-wrap" }}>{seedError}</pre>
-        <div>BASE_URL: {import.meta.env.BASE_URL}</div>
-      </div>
-    );
-  }
-
+  // ✅ 3) memos (항상 실행)
   const grid = useMemo(() => buildMonthGrid(month), [month]);
 
   const tasksByDate = useMemo(() => {
@@ -103,7 +102,6 @@ export default function App() {
       map.set(t.dueDate, arr);
     });
 
-    // 정렬(기수->업무명)
     for (const [k, arr] of map.entries()) {
       arr.sort((a, b) => (a.cohortId + a.title).localeCompare(b.cohortId + b.title));
       map.set(k, arr);
@@ -112,33 +110,36 @@ export default function App() {
     return map;
   }, [taskMap]);
 
+  // ✅ derived
   const selectedTasks = tasksByDate.get(selectedDate) ?? [];
 
   const setTask = (task: Task) => {
     const next = { ...taskMap, [task.id]: task };
     setTaskMap(next);
-    saveTasks(next);
+    try {
+      saveTasks(next);
+    } catch (e) {
+      setSeedError(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+    }
   };
 
   const toggleDone = (task: Task) => setTask({ ...task, done: !task.done, updatedAt: Date.now() });
 
   const moveTaskDate = (task: Task, delta: number) => {
-    // 날짜만 바꾸고, id는 그대로 두면 “충돌/중복”이 생길 수 있음 → id도 재생성
     const newDue = addDays(task.dueDate, delta);
     const newId = `${task.cohortId}:${task.key}:${newDue}`;
 
     const nextMap = { ...taskMap };
     delete nextMap[task.id];
 
-    nextMap[newId] = {
-      ...task,
-      id: newId,
-      dueDate: newDue,
-      updatedAt: Date.now(),
-    };
+    nextMap[newId] = { ...task, id: newId, dueDate: newDue, updatedAt: Date.now() };
 
     setTaskMap(nextMap);
-    saveTasks(nextMap);
+    try {
+      saveTasks(nextMap);
+    } catch (e) {
+      setSeedError(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+    }
   };
 
   const changeAssignee = (task: Task, assigneeId: string) => {
@@ -159,7 +160,9 @@ export default function App() {
 
     const done = tasks.filter((t) => t.done).length;
     const overdue = tasks.some((t) => !t.done && t.dueDate < todayISO);
-    const imminent = tasks.some((t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3));
+    const imminent = tasks.some(
+      (t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3)
+    );
 
     let cls = "badge";
     if (overdue) cls += " danger";
@@ -172,8 +175,41 @@ export default function App() {
     );
   };
 
+  // ✅ 4) JSX only conditional rendering (no early returns)
+  const overlay = seedLoading || !!seedError;
+
   return (
-    <div className="app">
+    <div className="app" style={{ position: "relative" }}>
+      {overlay && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            color: "white",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
+          {seedError ? (
+            <div>
+              <h2>에러 발생</h2>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{seedError}</pre>
+              <div>BASE_URL: {import.meta.env.BASE_URL}</div>
+            </div>
+          ) : (
+            <div>
+              <h2>로딩 중…</h2>
+              <div>잠시만</div>
+            </div>
+          )}
+        </div>
+      )}
+
       <header className="topbar">
         <div className="title">교육 운영 에이전트 (MVP)</div>
         <div className="controls">
@@ -216,7 +252,6 @@ export default function App() {
                       {t.cohortId}기 · {t.title}
                     </div>
                   ))}
-
                   {(tasksByDate.get(d) ?? []).length > 2 && (
                     <div className="more">+{(tasksByDate.get(d) ?? []).length - 2}개</div>
                   )}
@@ -245,7 +280,8 @@ export default function App() {
             ) : (
               selectedTasks.map((task) => {
                 const overdue = !task.done && task.dueDate < todayISO;
-                const imminent = !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
+                const imminent =
+                  !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
 
                 return (
                   <div key={task.id} className={"task " + (task.done ? "done" : "")}>
