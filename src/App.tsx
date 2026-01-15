@@ -43,13 +43,17 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(todayISO);
   const [taskMap, setTaskMap] = useState<Record<string, Task>>({});
 
+  console.log("App mounted");
+
   // ✅ 2) effects
   useEffect(() => {
     let alive = true;
 
     (async () => {
       try {
-        const url = import.meta.env.BASE_URL + "tasks.seed.json";
+        const url = "/manage/tasks.seed.json";
+        
+        console.log("fetching seed...");
 
         const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) throw new Error(`seed fetch failed: ${res.status} ${res.statusText}`);
