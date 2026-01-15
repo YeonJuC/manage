@@ -43,7 +43,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const res = await fetch("/tasks.seed.json");
+      const res = await fetch(import.meta.env.BASE_URL + "tasks.seed.json");
       const data = (await res.json()) as Seed;
       setSeed(data);
 
