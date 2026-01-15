@@ -16,19 +16,16 @@ function buildMonthGrid(monthISO: string) {
   const firstWeekday = weekday(start);
   const days: string[] = [];
 
-  // 앞쪽 빈칸 채우기(이전달)
   for (let i = 0; i < firstWeekday; i++) {
     days.push(addDays(start, -(firstWeekday - i)));
   }
 
-  // 이번달 날짜
   let cur = start;
   while (cur <= end) {
     days.push(cur);
     cur = addDays(cur, 1);
   }
 
-  // 6주(42칸) 맞추기
   while (days.length < 42) {
     days.push(addDays(days[days.length - 1], 1));
   }
@@ -45,24 +42,53 @@ export default function App() {
   const [selectedDate, setSelectedDate] = useState(todayISO);
   const [taskMap, setTaskMap] = useState<Record<string, Task>>({});
 
+  // ✅ JS 실행 여부 확인용 "tick"
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 500);
+    return () => window.clearInterval(id);
+  }, []);
+
   useEffect(() => {
     (async () => {
       try {
         const url = import.meta.env.BASE_URL + "tasks.seed.json";
         console.log("seed fetch url:", url);
 
-        const res = await fetch(url, { cache: "no-store" });
+        // ✅ 8초 타임아웃(무한 대기 방지)
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 8000);
+
+        const res = await fetch(url, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        window.clearTimeout(timer);
+
         if (!res.ok) throw new Error(`seed fetch failed: ${res.status} ${res.statusText}`);
 
         const data = (await res.json()) as Seed;
         setSeed(data);
 
-        const stored = loadTasks();
+        // ✅ localStorage에서 예외 나도 화면에 띄우기
+        let stored: Record<string, Task> = {};
+        try {
+          stored = loadTasks();
+        } catch (e) {
+          throw new Error(`loadTasks(localStorage) failed: ${(e as Error).message}`);
+        }
+
         const withBaseline = generateBaselineTasks(data.cohorts, data.assignees, stored);
         const normalized = updateAssigneeNames(withBaseline, data.assignees);
 
         setTaskMap(normalized);
-        saveTasks(normalized);
+
+        try {
+          saveTasks(normalized);
+        } catch (e) {
+          throw new Error(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+        }
       } catch (e) {
         console.error(e);
         setSeedError((e as Error).message);
@@ -72,7 +98,7 @@ export default function App() {
     })();
   }, []);
 
-  // ✅ 훅은 무조건 항상 실행되게 유지 (early return 금지)
+  // ✅ 훅은 항상 실행되게 유지 (early return 금지)
   const grid = useMemo(() => buildMonthGrid(month), [month]);
 
   const tasksByDate = useMemo(() => {
@@ -82,8 +108,6 @@ export default function App() {
       arr.push(t);
       map.set(t.dueDate, arr);
     });
-
-    // 정렬(기수->업무명)
     for (const [k, arr] of map.entries()) {
       arr.sort((a, b) => (a.cohortId + a.title).localeCompare(b.cohortId + b.title));
       map.set(k, arr);
@@ -96,7 +120,11 @@ export default function App() {
   const setTask = (task: Task) => {
     const next = { ...taskMap, [task.id]: task };
     setTaskMap(next);
-    saveTasks(next);
+    try {
+      saveTasks(next);
+    } catch (e) {
+      setSeedError(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+    }
   };
 
   const toggleDone = (task: Task) => setTask({ ...task, done: !task.done, updatedAt: Date.now() });
@@ -108,15 +136,14 @@ export default function App() {
     const nextMap = { ...taskMap };
     delete nextMap[task.id];
 
-    nextMap[newId] = {
-      ...task,
-      id: newId,
-      dueDate: newDue,
-      updatedAt: Date.now(),
-    };
+    nextMap[newId] = { ...task, id: newId, dueDate: newDue, updatedAt: Date.now() };
 
     setTaskMap(nextMap);
-    saveTasks(nextMap);
+    try {
+      saveTasks(nextMap);
+    } catch (e) {
+      setSeedError(`saveTasks(localStorage) failed: ${(e as Error).message}`);
+    }
   };
 
   const changeAssignee = (task: Task, assigneeId: string) => {
@@ -137,23 +164,16 @@ export default function App() {
 
     const done = tasks.filter((t) => t.done).length;
     const overdue = tasks.some((t) => !t.done && t.dueDate < todayISO);
-    const imminent = tasks.some(
-      (t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3)
-    );
+    const imminent = tasks.some((t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3));
 
     let cls = "badge";
     if (overdue) cls += " danger";
     else if (imminent) cls += " warn";
 
-    return (
-      <span className={cls}>
-        {done}/{tasks.length}
-      </span>
-    );
+    return <span className={cls}>{done}/{tasks.length}</span>;
   };
 
-  // ✅ 로딩/에러를 "return으로 끊지 말고" 화면 위에 덮어씌우기
-  const overlay = seedLoading || seedError;
+  const overlay = seedLoading || !!seedError;
 
   return (
     <div className="app" style={{ position: "relative" }}>
@@ -172,16 +192,19 @@ export default function App() {
             textAlign: "center",
           }}
         >
-          {seedLoading ? (
-            <div>
-              <h2>로딩 중…</h2>
-              <div>BASE_URL: {import.meta.env.BASE_URL}</div>
-            </div>
-          ) : (
+          {seedError ? (
             <div>
               <h2>에러 발생</h2>
               <pre style={{ whiteSpace: "pre-wrap" }}>{seedError}</pre>
               <div>BASE_URL: {import.meta.env.BASE_URL}</div>
+              <div>tick: {tick}</div>
+            </div>
+          ) : (
+            <div>
+              <h2>로딩 중…</h2>
+              <div>BASE_URL: {import.meta.env.BASE_URL}</div>
+              <div>tick: {tick}</div>
+              <div style={{ opacity: 0.8, marginTop: 8 }}>8초 지나면 자동으로 원인 표시됨</div>
             </div>
           )}
         </div>
@@ -199,10 +222,8 @@ export default function App() {
       <main className="main">
         <section className="calendar">
           <div className="dow">
-            {["일", "월", "화", "수", "목", "금", "토"].map((d) => (
-              <div key={d} className="dowcell">
-                {d}
-              </div>
+            {["일","월","화","수","목","금","토"].map((d) => (
+              <div key={d} className="dowcell">{d}</div>
             ))}
           </div>
 
@@ -229,7 +250,6 @@ export default function App() {
                       {t.cohortId}기 · {t.title}
                     </div>
                   ))}
-
                   {(tasksByDate.get(d) ?? []).length > 2 && (
                     <div className="more">+{(tasksByDate.get(d) ?? []).length - 2}개</div>
                   )}
@@ -243,10 +263,7 @@ export default function App() {
           <div className="panelhead">
             <div className="paneldate">
               {new Date(selectedDate + "T00:00:00").toLocaleDateString("ko-KR", {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-                weekday: "short",
+                year: "numeric", month: "long", day: "numeric", weekday: "short"
               })}
             </div>
             <div className="hint">🔔 임박(3일 이내) / ⚠️ 지연(오늘 이전 미완료)</div>
@@ -258,18 +275,13 @@ export default function App() {
             ) : (
               selectedTasks.map((task) => {
                 const overdue = !task.done && task.dueDate < todayISO;
-                const imminent =
-                  !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
+                const imminent = !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
 
                 return (
                   <div key={task.id} className={"task " + (task.done ? "done" : "")}>
                     <div className="taskmain">
                       <label className="check">
-                        <input
-                          type="checkbox"
-                          checked={task.done}
-                          onChange={() => toggleDone(task)}
-                        />
+                        <input type="checkbox" checked={task.done} onChange={() => toggleDone(task)} />
                         <span />
                       </label>
 
@@ -278,22 +290,15 @@ export default function App() {
                           {overdue ? "⚠️ " : imminent ? "🔔 " : ""}
                           [{task.cohortName}] {task.title}
                         </div>
-                        <div className="taskmeta">
-                          기준일: {task.baselineDueDate} · 현재: {task.dueDate}
-                        </div>
+                        <div className="taskmeta">기준일: {task.baselineDueDate} · 현재: {task.dueDate}</div>
                       </div>
                     </div>
 
                     <div className="taskactions">
-                      <select
-                        value={task.assigneeId ?? ""}
-                        onChange={(e) => changeAssignee(task, e.target.value)}
-                      >
+                      <select value={task.assigneeId ?? ""} onChange={(e) => changeAssignee(task, e.target.value)}>
                         <option value="">담당자 미지정</option>
                         {seed?.assignees.map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
+                          <option key={a.id} value={a.id}>{a.name}</option>
                         ))}
                       </select>
 
