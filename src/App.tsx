@@ -72,27 +72,7 @@ export default function App() {
     })();
   }, []);
 
-  // ✅ 로딩/에러 UI (원인 확인용)
-  if (seedLoading) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>로딩 중…</h2>
-        <div>seedLoading = true</div>
-        <div>BASE_URL: {import.meta.env.BASE_URL}</div>
-      </div>
-    );
-  }
-
-  if (seedError) {
-    return (
-      <div style={{ padding: 24 }}>
-        <h2>에러 발생</h2>
-        <pre style={{ whiteSpace: "pre-wrap" }}>{seedError}</pre>
-        <div>BASE_URL: {import.meta.env.BASE_URL}</div>
-      </div>
-    );
-  }
-
+  // ✅ 훅은 무조건 항상 실행되게 유지 (early return 금지)
   const grid = useMemo(() => buildMonthGrid(month), [month]);
 
   const tasksByDate = useMemo(() => {
@@ -108,7 +88,6 @@ export default function App() {
       arr.sort((a, b) => (a.cohortId + a.title).localeCompare(b.cohortId + b.title));
       map.set(k, arr);
     }
-
     return map;
   }, [taskMap]);
 
@@ -123,7 +102,6 @@ export default function App() {
   const toggleDone = (task: Task) => setTask({ ...task, done: !task.done, updatedAt: Date.now() });
 
   const moveTaskDate = (task: Task, delta: number) => {
-    // 날짜만 바꾸고, id는 그대로 두면 “충돌/중복”이 생길 수 있음 → id도 재생성
     const newDue = addDays(task.dueDate, delta);
     const newId = `${task.cohortId}:${task.key}:${newDue}`;
 
@@ -159,7 +137,9 @@ export default function App() {
 
     const done = tasks.filter((t) => t.done).length;
     const overdue = tasks.some((t) => !t.done && t.dueDate < todayISO);
-    const imminent = tasks.some((t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3));
+    const imminent = tasks.some(
+      (t) => !t.done && t.dueDate >= todayISO && t.dueDate <= addDays(todayISO, 3)
+    );
 
     let cls = "badge";
     if (overdue) cls += " danger";
@@ -172,8 +152,41 @@ export default function App() {
     );
   };
 
+  // ✅ 로딩/에러를 "return으로 끊지 말고" 화면 위에 덮어씌우기
+  const overlay = seedLoading || seedError;
+
   return (
-    <div className="app">
+    <div className="app" style={{ position: "relative" }}>
+      {overlay && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            color: "white",
+            zIndex: 9999,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+            textAlign: "center",
+          }}
+        >
+          {seedLoading ? (
+            <div>
+              <h2>로딩 중…</h2>
+              <div>BASE_URL: {import.meta.env.BASE_URL}</div>
+            </div>
+          ) : (
+            <div>
+              <h2>에러 발생</h2>
+              <pre style={{ whiteSpace: "pre-wrap" }}>{seedError}</pre>
+              <div>BASE_URL: {import.meta.env.BASE_URL}</div>
+            </div>
+          )}
+        </div>
+      )}
+
       <header className="topbar">
         <div className="title">교육 운영 에이전트 (MVP)</div>
         <div className="controls">
@@ -245,13 +258,18 @@ export default function App() {
             ) : (
               selectedTasks.map((task) => {
                 const overdue = !task.done && task.dueDate < todayISO;
-                const imminent = !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
+                const imminent =
+                  !task.done && task.dueDate >= todayISO && task.dueDate <= addDays(todayISO, 3);
 
                 return (
                   <div key={task.id} className={"task " + (task.done ? "done" : "")}>
                     <div className="taskmain">
                       <label className="check">
-                        <input type="checkbox" checked={task.done} onChange={() => toggleDone(task)} />
+                        <input
+                          type="checkbox"
+                          checked={task.done}
+                          onChange={() => toggleDone(task)}
+                        />
                         <span />
                       </label>
 
@@ -267,7 +285,10 @@ export default function App() {
                     </div>
 
                     <div className="taskactions">
-                      <select value={task.assigneeId ?? ""} onChange={(e) => changeAssignee(task, e.target.value)}>
+                      <select
+                        value={task.assigneeId ?? ""}
+                        onChange={(e) => changeAssignee(task, e.target.value)}
+                      >
                         <option value="">담당자 미지정</option>
                         {seed?.assignees.map((a) => (
                           <option key={a.id} value={a.id}>
@@ -291,4 +312,3 @@ export default function App() {
     </div>
   );
 }
-
