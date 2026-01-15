@@ -1,0 +1,12 @@
+{
+  "cohorts": [
+    { "id": "32", "name": "32기(1차)", "week1Start": "2026-02-23" },
+    { "id": "33", "name": "33기(2차)", "week1Start": "2026-05-11" },
+    { "id": "34", "name": "34기(3차)", "week1Start": "2026-07-27" },
+    { "id": "35", "name": "35기(4차)", "week1Start": "2026-10-12" }
+  ],
+  "assignees": [
+    { "id": "yeonju", "name": "연주" },
+    { "id": "staff1", "name": "담당자A" }
+  ]
+}
